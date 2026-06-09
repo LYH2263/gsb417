@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
-import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers, History, Trash2, Clock, X } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = "http://localhost:8417/api";
+const HISTORY_KEY = "paperwise_rewrite_history";
+const MAX_HISTORY = 30;
+const LEVEL_LABELS = { low: "轻微", medium: "中度", high: "深度" };
 
 function App() {
   const [file, setFile] = useState(null);
@@ -13,7 +16,34 @@ function App() {
   const [result, setResult] = useState(null);
   const [rewriteLevel, setRewriteLevel] = useState("medium");
   const [rewriteResult, setRewriteResult] = useState(null);
-  const [quota, setQuota] = useState(10); // 每日额度
+  const [quota, setQuota] = useState(10);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(HISTORY_KEY);
+      if (stored) setHistory(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const saveHistory = (records) => {
+    setHistory(records);
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(records));
+    } catch {}
+  };
+
+  const addHistoryRecord = (record) => {
+    const updated = [record, ...history].slice(0, MAX_HISTORY);
+    saveHistory(updated);
+  };
+
+  const clearHistory = () => {
+    saveHistory([]);
+    setExpandedId(null);
+  };
 
   const scrollToInput = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -103,6 +133,20 @@ function App() {
       });
       setRewriteResult(response.data);
       decreaseQuota();
+
+      const originalAiScore = result?.overall_ai_score ?? null;
+      const rewrittenAiScore = response.data?.detection_after?.overall_ai_score ?? null;
+      addHistoryRecord({
+        id: Date.now(),
+        timestamp: new Date().toLocaleString("zh-CN"),
+        level: rewriteLevel,
+        levelLabel: LEVEL_LABELS[rewriteLevel] || rewriteLevel,
+        originalAiScore,
+        rewrittenAiScore,
+        originalText: text,
+        rewrittenText: response.data?.rewritten_text || "",
+      });
+
       setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 500);
     } catch (err) {
       alert("Rewriting failed: " + err.message);
@@ -123,6 +167,18 @@ function App() {
             <span className="text-xl font-bold tracking-tight text-white italic">Paper<span className="text-indigo-500 font-black">Wise</span></span>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="relative flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-full border border-slate-700 transition-colors"
+            >
+              <History className="w-3.5 h-3.5" />
+              改写历史
+              {history.length > 0 && (
+                <span className="ml-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                  {history.length}
+                </span>
+              )}
+            </button>
             <div className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
               今日额度: <span className={quota > 3 ? "text-indigo-400" : "text-red-400"}>{quota}/10</span>
             </div>
@@ -350,6 +406,123 @@ function App() {
                     ))}
                   </div>
                 )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Rewrite History Panel */}
+          <AnimatePresence>
+            {showHistory && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="lg:col-span-12"
+              >
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-indigo-500/5 pointer-events-none"></div>
+                  <div className="relative">
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-purple-600/20 rounded-lg flex items-center justify-center">
+                          <History className="w-4 h-4 text-purple-400" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-white">改写历史记录</h2>
+                          <p className="text-xs text-slate-500">保留最近 {MAX_HISTORY} 条改写记录</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {history.length > 0 && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm("确定要清空所有历史记录吗？此操作不可撤销。")) {
+                                clearHistory();
+                              }
+                            }}
+                            className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-lg border border-red-500/20 transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            清空历史
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setShowHistory(false)}
+                          className="text-slate-500 hover:text-white transition-colors"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {history.length === 0 ? (
+                      <div className="text-center py-16">
+                        <History className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                        <p className="text-slate-500 text-sm">暂无改写历史记录</p>
+                        <p className="text-slate-600 text-xs mt-1">完成一次「一键人性化改写」后将自动记录</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                        {history.map((record) => (
+                          <div
+                            key={record.id}
+                            className="bg-slate-950/60 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 transition-colors cursor-pointer"
+                            onClick={() => setExpandedId(expandedId === record.id ? null : record.id)}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                  <Clock className="w-3 h-3" />
+                                  {record.timestamp}
+                                </div>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  record.level === 'low' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+                                  record.level === 'medium' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' :
+                                  'bg-red-500/10 text-red-400 border border-red-500/20'
+                                }`}>
+                                  {record.levelLabel}改写
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                {record.originalAiScore !== null && record.rewrittenAiScore !== null && (
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <span className="text-red-400 font-bold">{record.originalAiScore}%</span>
+                                    <ChevronRight className="w-3 h-3 text-slate-600" />
+                                    <span className="text-indigo-400 font-bold">{record.rewrittenAiScore}%</span>
+                                  </div>
+                                )}
+                                <ChevronRight className={`w-4 h-4 text-slate-600 transition-transform ${expandedId === record.id ? 'rotate-90' : ''}`} />
+                              </div>
+                            </div>
+
+                            {expandedId === record.id && (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                className="mt-4 pt-4 border-t border-slate-800"
+                              >
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div>
+                                    <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">原文</p>
+                                    <div className="text-xs text-slate-400 leading-relaxed max-h-[200px] overflow-y-auto bg-slate-900/50 rounded-xl p-3 border border-slate-800">
+                                      {record.originalText}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">改写文</p>
+                                    <div className="text-xs text-white leading-relaxed max-h-[200px] overflow-y-auto bg-slate-900/50 rounded-xl p-3 border border-indigo-500/20">
+                                      {record.rewrittenText}
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
