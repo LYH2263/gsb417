@@ -1,0 +1,15 @@
+# 题目与对话相关文件
+题目.md
+对话.md/
+
+# 环境变量（含密钥，禁止上传）
+backend/.env
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# 依赖与构建产物
+node_modules/
+dist/

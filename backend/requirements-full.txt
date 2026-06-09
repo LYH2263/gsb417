@@ -1,0 +1,12 @@
+# 本地安装依赖（已安装 transformers 和 torch）
+fastapi
+uvicorn
+python-multipart
+transformers
+torch
+python-docx
+pymupdf
+python-dotenv
+requests
+pydantic
+aiofiles

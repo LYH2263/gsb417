@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+python-docx
+pymupdf
+python-dotenv
+requests
+pydantic
+aiofiles
+# 运行时手动安装 transformers, 我们会在 Dockerfile 优化

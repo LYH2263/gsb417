@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8417:8417"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+      - huggingface_cache:/root/.cache/huggingface
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5417:4173" # 宿主机 5417 -> 容器内 vite preview 4173，与 README 一致
+    depends_on:
+      - backend
+
+volumes:
+  huggingface_cache:
