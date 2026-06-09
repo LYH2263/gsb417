@@ -1,9 +1,18 @@
-import React, { useState } from 'react';
-import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers, History, Trash2, Clock } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = "http://localhost:8417/api";
+const HISTORY_STORAGE_KEY = "paperwise_history";
+const MAX_HISTORY_RECORDS = 20;
+
+const LEVEL_LABELS = { low: "轻微", medium: "中度", high: "深度" };
+const LEVEL_COLORS = {
+  low: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  medium: "bg-indigo-500/10 text-indigo-400 border-indigo-500/30",
+  high: "bg-rose-500/10 text-rose-400 border-rose-500/30"
+};
 
 function App() {
   const [file, setFile] = useState(null);
@@ -14,6 +23,52 @@ function App() {
   const [rewriteLevel, setRewriteLevel] = useState("medium");
   const [rewriteResult, setRewriteResult] = useState(null);
   const [quota, setQuota] = useState(10); // 每日额度
+  const [history, setHistory] = useState([]);
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setHistory(parsed);
+      }
+    } catch (e) {
+      // ignore corrupted storage
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch (e) {
+      // ignore quota exceeded errors
+    }
+  }, [history]);
+
+  const formatTimestamp = (ts) => {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const saveHistoryRecord = (record) => {
+    setHistory(prev => {
+      const next = [record, ...prev];
+      if (next.length > MAX_HISTORY_RECORDS) {
+        next.length = MAX_HISTORY_RECORDS;
+      }
+      return next;
+    });
+  };
+
+  const clearHistory = () => {
+    if (history.length === 0) return;
+    if (window.confirm("确定要清空全部改写历史记录吗？此操作不可恢复。")) {
+      setHistory([]);
+      setExpandedHistoryId(null);
+    }
+  };
 
   const scrollToInput = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -103,6 +158,15 @@ function App() {
       });
       setRewriteResult(response.data);
       decreaseQuota();
+      saveHistoryRecord({
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        level: rewriteLevel,
+        originalAiScore: result?.overall_ai_score ?? null,
+        rewrittenAiScore: response.data.detection_after?.overall_ai_score ?? null,
+        originalText: text,
+        rewrittenText: response.data.rewritten_text
+      });
       setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 500);
     } catch (err) {
       alert("Rewriting failed: " + err.message);
@@ -353,6 +417,118 @@ function App() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* History Section */}
+          <div className="lg:col-span-12">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-slate-800 rounded-xl flex items-center justify-center border border-slate-700">
+                    <History className="w-4 h-4 text-slate-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">改写历史记录</h2>
+                    <p className="text-xs text-slate-500">最近 {MAX_HISTORY_RECORDS} 条记录 · 仅保存在本地浏览器</p>
+                  </div>
+                </div>
+                {history.length > 0 && (
+                  <button
+                    onClick={clearHistory}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 border border-slate-700 hover:border-red-500/30 rounded-lg transition-all"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    清空历史
+                  </button>
+                )}
+              </div>
+
+              {history.length === 0 ? (
+                <div className="text-center py-12 text-slate-600">
+                  <Clock className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                  <p className="text-sm">暂无改写记录</p>
+                  <p className="text-xs mt-1 text-slate-700">完成一键人性化改写后，记录将自动保存在这里</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+                  <AnimatePresence>
+                    {history.map((record) => {
+                      const isExpanded = expandedHistoryId === record.id;
+                      const scoreDrop = record.originalAiScore != null && record.rewrittenAiScore != null
+                        ? record.originalAiScore - record.rewrittenAiScore
+                        : null;
+                      return (
+                        <motion.div
+                          key={record.id}
+                          layout
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all cursor-pointer"
+                          onClick={() => setExpandedHistoryId(isExpanded ? null : record.id)}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-bold border ${LEVEL_COLORS[record.level] || LEVEL_COLORS.medium}`}>
+                                {LEVEL_LABELS[record.level] || record.level}改写
+                              </span>
+                              <span className="text-xs text-slate-500 flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {formatTimestamp(record.timestamp)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className={`font-bold ${record.originalAiScore != null ? (record.originalAiScore > 50 ? 'text-red-400' : 'text-green-400') : 'text-slate-600'}`}>
+                                  {record.originalAiScore != null ? `${record.originalAiScore}%` : '—'}
+                                </span>
+                                <ChevronRight className="w-4 h-4 text-slate-600" />
+                                <span className={`font-bold ${record.rewrittenAiScore != null ? (record.rewrittenAiScore > 50 ? 'text-red-400' : 'text-indigo-400') : 'text-slate-600'}`}>
+                                  {record.rewrittenAiScore != null ? `${record.rewrittenAiScore}%` : '—'}
+                                </span>
+                                {scoreDrop != null && scoreDrop > 0 && (
+                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md ml-1">
+                                    -{scoreDrop}%
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronRight className={`w-4 h-4 text-slate-600 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-4"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div>
+                                <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                  <FileText className="w-3 h-3" /> 原文
+                                </h4>
+                                <div className="text-xs leading-relaxed text-slate-400 max-h-[200px] overflow-y-auto bg-slate-900/50 rounded-xl p-3 border border-slate-800 whitespace-pre-wrap">
+                                  {record.originalText}
+                                </div>
+                              </div>
+                              <div>
+                                <h4 className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                  <Sparkles className="w-3 h-3" /> 改写文
+                                </h4>
+                                <div className="text-xs leading-relaxed text-white max-h-[200px] overflow-y-auto bg-slate-900/50 rounded-xl p-3 border border-indigo-500/20 whitespace-pre-wrap">
+                                  {record.rewrittenText}
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </main>
 
