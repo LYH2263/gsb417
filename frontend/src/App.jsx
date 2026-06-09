@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers, History, Trash2, Clock } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = "http://localhost:8417/api";
+const MAX_HISTORY = 20;
+const HISTORY_STORAGE_KEY = 'paperwise_rewrite_history';
 
 function App() {
   const [file, setFile] = useState(null);
@@ -14,6 +16,76 @@ function App() {
   const [rewriteLevel, setRewriteLevel] = useState("medium");
   const [rewriteResult, setRewriteResult] = useState(null);
   const [quota, setQuota] = useState(10); // 每日额度
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (saved) {
+      try {
+        setHistory(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to parse history:', e);
+      }
+    }
+  }, []);
+
+  const saveHistory = (newHistory) => {
+    setHistory(newHistory);
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(newHistory));
+  };
+
+  const addToHistory = (record) => {
+    const newRecord = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      ...record
+    };
+    const newHistory = [newRecord, ...history].slice(0, MAX_HISTORY);
+    saveHistory(newHistory);
+  };
+
+  const clearHistory = () => {
+    saveHistory([]);
+  };
+
+  const formatTime = (isoString) => {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diff = now - date;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes} 分钟前`;
+    if (hours < 24) return `${hours} 小时前`;
+    if (days < 7) return `${days} 天前`;
+    
+    return date.toLocaleDateString('zh-CN', { 
+      month: 'short', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  const getLevelLabel = (level) => {
+    switch (level) {
+      case 'low': return '轻微';
+      case 'medium': return '中度';
+      case 'high': return '深度';
+      default: return level;
+    }
+  };
+
+  const getLevelColor = (level) => {
+    switch (level) {
+      case 'low': return 'bg-green-500/10 text-green-400 border-green-500/30';
+      case 'medium': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
+      case 'high': return 'bg-red-500/10 text-red-400 border-red-500/30';
+      default: return 'bg-slate-500/10 text-slate-400 border-slate-500/30';
+    }
+  };
 
   const scrollToInput = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -101,8 +173,23 @@ function App() {
         text: text,
         level: rewriteLevel
       });
-      setRewriteResult(response.data);
+      const data = response.data;
+      setRewriteResult(data);
       decreaseQuota();
+
+      const originalAiScore = result?.overall_ai_score ?? data.detection_before?.overall_ai_score ?? null;
+      const rewrittenAiScore = data.detection_after?.overall_ai_score ?? null;
+
+      if (originalAiScore !== null && rewrittenAiScore !== null) {
+        addToHistory({
+          level: rewriteLevel,
+          originalAiScore,
+          rewrittenAiScore,
+          originalText: text,
+          rewrittenText: data.rewritten_text
+        });
+      }
+
       setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 500);
     } catch (err) {
       alert("Rewriting failed: " + err.message);
@@ -350,6 +437,121 @@ function App() {
                     ))}
                   </div>
                 )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* History Section */}
+          <AnimatePresence>
+            {history.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                id="history-section"
+                className="lg:col-span-12 space-y-4"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History className="w-5 h-5 text-indigo-400" />
+                    <h2 className="text-xl font-bold text-white">改写历史记录</h2>
+                    <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">
+                      最近 {history.length}/{MAX_HISTORY} 条
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (confirm('确定要清空所有历史记录吗？此操作不可撤销。')) {
+                        clearHistory();
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-red-400 transition-colors border border-slate-700 hover:border-red-500/30 rounded-lg"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    清空历史
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {history.map((record) => (
+                    <motion.div
+                      key={record.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-all hover:shadow-lg hover:shadow-indigo-500/5 group"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3.5 h-3.5 text-slate-500" />
+                          <span className="text-xs text-slate-500">{formatTime(record.timestamp)}</span>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getLevelColor(record.level)}`}>
+                          {getLevelLabel(record.level)}改写
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="text-center">
+                          <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">原文 AI 率</p>
+                          <p className={`text-xl font-black ${record.originalAiScore > 50 ? 'text-red-500' : 'text-green-500'}`}>
+                            {record.originalAiScore}%
+                          </p>
+                        </div>
+                        <ChevronRight className="text-slate-700 w-5 h-5" />
+                        <div className="text-center">
+                          <p className="text-[10px] text-indigo-400 uppercase font-bold mb-1">改写后 AI 率</p>
+                          <p className="text-xl font-black text-indigo-400">
+                            {record.rewrittenAiScore}%
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden flex mb-3">
+                        <div
+                          className={`h-full transition-all ${record.originalAiScore > 50 ? 'bg-red-500' : 'bg-green-500'}`}
+                          style={{ width: `${record.originalAiScore}%` }}
+                        ></div>
+                        <div
+                          className="h-full bg-indigo-500 border-l-2 border-slate-900"
+                          style={{ width: `${record.rewrittenAiScore}%` }}
+                        ></div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-[10px] text-slate-600 font-bold mb-1">原文摘要</p>
+                          <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                            {record.originalText}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-indigo-500/70 font-bold mb-1">改写文摘要</p>
+                          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                            {record.rewrittenText}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 pt-3 border-t border-slate-800 flex gap-2">
+                        <button
+                          onClick={() => {
+                            setText(record.originalText);
+                            setRewriteLevel(record.level);
+                            setResult({ overall_ai_score: record.originalAiScore });
+                            setRewriteResult({
+                              rewritten_text: record.rewrittenText,
+                              detection_after: { overall_ai_score: record.rewrittenAiScore }
+                            });
+                            scrollToInput();
+                            setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 100);
+                          }}
+                          className="flex-1 text-xs py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors text-center"
+                        >
+                          查看详情
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
