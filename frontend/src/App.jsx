@@ -1,9 +1,23 @@
-import React, { useState } from 'react';
-import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, ShieldCheck, Zap, FileText, ChevronRight, Sparkles, RefreshCcw, CheckCircle, Download, FileDown, Layers, History, Trash2 } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = "http://localhost:8417/api";
+const HISTORY_STORAGE_KEY = "paperwise_rewrite_history_v1";
+const HISTORY_MAX_ITEMS = 20;
+
+const LEVEL_LABELS = {
+  low: "轻微",
+  medium: "中度",
+  high: "深度",
+};
+
+const LEVEL_BADGE_CLASS = {
+  low: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  medium: "bg-indigo-500/10 text-indigo-400 border-indigo-500/30",
+  high: "bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/30",
+};
 
 function App() {
   const [file, setFile] = useState(null);
@@ -14,6 +28,58 @@ function App() {
   const [rewriteLevel, setRewriteLevel] = useState("medium");
   const [rewriteResult, setRewriteResult] = useState(null);
   const [quota, setQuota] = useState(10); // 每日额度
+  const [history, setHistory] = useState([]);
+
+  // 初始化：从 localStorage 加载历史记录
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setHistory(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("加载改写历史失败：", e);
+    }
+  }, []);
+
+  // 历史变化时持久化到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch (e) {
+      console.warn("保存改写历史失败：", e);
+    }
+  }, [history]);
+
+  const addHistoryEntry = (entry) => {
+    setHistory(prev => {
+      const next = [entry, ...prev];
+      if (next.length > HISTORY_MAX_ITEMS) {
+        next.length = HISTORY_MAX_ITEMS;
+      }
+      return next;
+    });
+  };
+
+  const clearHistory = () => {
+    if (history.length === 0) return;
+    if (window.confirm("确定要清空全部改写历史记录吗？此操作不可恢复。")) {
+      setHistory([]);
+    }
+  };
+
+  const formatTime = (ts) => {
+    try {
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch {
+      return "";
+    }
+  };
 
   const scrollToInput = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -103,6 +169,18 @@ function App() {
       });
       setRewriteResult(response.data);
       decreaseQuota();
+      // 自动写入改写历史
+      addHistoryEntry({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: Date.now(),
+        level: rewriteLevel,
+        originalAiScore: response.data?.detection_before?.overall_ai_score
+          ?? result?.overall_ai_score
+          ?? null,
+        rewrittenAiScore: response.data?.detection_after?.overall_ai_score ?? null,
+        originalText: text,
+        rewrittenText: response.data?.rewritten_text ?? "",
+      });
       setTimeout(() => document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' }), 500);
     } catch (err) {
       alert("Rewriting failed: " + err.message);
@@ -353,6 +431,105 @@ function App() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* 改写历史记录面板 */}
+          <div className="lg:col-span-12">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center">
+                    <History className="w-4 h-4 text-indigo-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">改写历史记录</h2>
+                    <p className="text-xs text-slate-500">
+                      自动保存最近 {HISTORY_MAX_ITEMS} 条改写记录 · 当前 {history.length} 条
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={clearHistory}
+                  disabled={history.length === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-700 text-slate-400 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  清空历史
+                </button>
+              </div>
+
+              {history.length === 0 ? (
+                <div className="text-center py-10 border border-dashed border-slate-800 rounded-2xl">
+                  <p className="text-sm text-slate-500">
+                    暂无改写历史。完成一次「一键人性化改写」后将在此展示。
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {history.map(item => {
+                    const before = typeof item.originalAiScore === 'number' ? item.originalAiScore : null;
+                    const after = typeof item.rewrittenAiScore === 'number' ? item.rewrittenAiScore : null;
+                    const delta = (before !== null && after !== null) ? (before - after) : null;
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-4 bg-slate-950/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs text-slate-500">{formatTime(item.timestamp)}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${LEVEL_BADGE_CLASS[item.level] || LEVEL_BADGE_CLASS.medium}`}>
+                            {LEVEL_LABELS[item.level] || item.level}改写
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="flex-1 text-center bg-slate-900/60 rounded-lg py-2 border border-slate-800">
+                            <p className="text-[10px] text-slate-500 uppercase font-bold">原文</p>
+                            <p className={`text-lg font-black ${before !== null && before > 50 ? 'text-red-500' : 'text-green-500'}`}>
+                              {before !== null ? `${before}%` : '—'}
+                            </p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-600" />
+                          <div className="flex-1 text-center bg-indigo-500/5 rounded-lg py-2 border border-indigo-500/20">
+                            <p className="text-[10px] text-indigo-400 uppercase font-bold">改写后</p>
+                            <p className="text-lg font-black text-indigo-400">
+                              {after !== null ? `${after}%` : '—'}
+                            </p>
+                          </div>
+                          {delta !== null && (
+                            <div className="text-center min-w-[52px]">
+                              <p className="text-[10px] text-slate-500 uppercase font-bold">下降</p>
+                              <p className={`text-sm font-bold ${delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {delta >= 0 ? '−' : '+'}{Math.abs(delta)}%
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        <details className="group">
+                          <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none list-none flex items-center gap-1">
+                            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+                            查看原文与改写文
+                          </summary>
+                          <div className="mt-3 grid grid-cols-1 gap-3">
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">原文</p>
+                              <p className="text-xs text-slate-400 leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap pr-2">
+                                {item.originalText}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-indigo-400 uppercase mb-1">改写文</p>
+                              <p className="text-xs text-white leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap pr-2">
+                                {item.rewrittenText}
+                              </p>
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </main>
 
